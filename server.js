@@ -369,7 +369,7 @@ function autoPlay(room){
 function pub(room){
   return {
     code:room.code,mode:room.mode,n:room.n,c:room.c,
-    players:room.players.map((p,i)=>({id:p.id,name:p.name,index:i,slot:p.slot,color:room.slots[p.slot].color,account:p.account||null,isHost:i===0})),
+    players:room.players.map((p,i)=>({id:p.id,name:p.name,index:i,slot:p.slot,color:room.slots[p.slot].color,account:p.account||null,isHost:i===0,connected:p.connected!==false})),
     positions:room.positions,walls:room.walls,wallsLeft:room.wallsLeft,
     turn:room.turn,started:room.started,winner:room.winner,
     history:room.history,turnDeadline:room.turnDeadline,timeLeft:room.timeLeft,playerTimeMs:PLAYER_TIME_MS
@@ -393,16 +393,37 @@ function forceKickFromRoom(room,targetId){
   return true;
 }
 
+// Grace period given to a player whose socket drops (tab backgrounded/locked on
+// mobile, brief wifi hiccup, etc.) before we actually remove them from the room.
+// Without this, socket.io's own auto-reconnect silently hands the browser tab a
+// BRAND NEW socket id, and since nothing here re-associated that new socket with
+// the old room seat, the old "disconnect" handler used to rip the player out and
+// force the whole match back to the lobby instantly -- which looks, from every
+// other player's screen, exactly like "the game just stopped responding" the
+// moment turn passed to whoever had gone idle waiting for their turn.
+const DISCONNECT_GRACE_MS=25000;
+function clearGrace(player){ if(player._graceTimer){clearTimeout(player._graceTimer);player._graceTimer=null;} }
+function scheduleGrace(room,player){
+  clearGrace(player);
+  player._graceTimer=setTimeout(()=>{
+    if(player.connected)return; // reconnected in the meantime
+    room.players=room.players.filter(p=>p!==player);
+    if(!room.players.length){clearTimer(room);rooms.delete(room.code);return;}
+    if(room.started){room.started=false;room.winner=null;room.turn=0;clearTimer(room);}
+    send(room);
+  },DISCONNECT_GRACE_MS);
+}
+
 io.on("connection",s=>{
-  s.on("createRoom",safe(({name,token,mode})=>{
+  s.on("createRoom",safe(({name,token,mode,clientId})=>{
     const acc=accountByToken(token);
     const accKey=acc?sessions.get(String(token||"")):null;
     const room=newRoom(newCode(),mode);
     const finalName=acc?acc.username:(String(name||"Player 1").trim().slice(0,18)||"Player 1");
-    room.players.push({id:s.id,name:finalName,slot:0,account:accKey||null});
+    room.players.push({id:s.id,name:finalName,slot:0,account:accKey||null,clientId:String(clientId||"").slice(0,64)||null,connected:true});
     rooms.set(room.code,room);s.join(room.code);send(room);
   }));
-  s.on("joinRoom",safe(({code,name,token})=>{
+  s.on("joinRoom",safe(({code,name,token,clientId})=>{
     const room=rooms.get(String(code||"").trim().toUpperCase());
     if(!room)return s.emit("errorMsg","الغرفة غير موجودة.");
     if(room.started)return s.emit("errorMsg","المباراة بدأت بالفعل.");
@@ -414,7 +435,21 @@ io.on("connection",s=>{
     const used=new Set(room.players.map(p=>p.slot));
     const slot=slots.find(x=>!used.has(x));
     const finalName=acc?acc.username:(String(name||`Player ${room.players.length+1}`).trim().slice(0,18)||`Player ${room.players.length+1}`);
-    room.players.push({id:s.id,name:finalName,slot,account:accKey||null});
+    room.players.push({id:s.id,name:finalName,slot,account:accKey||null,clientId:String(clientId||"").slice(0,64)||null,connected:true});
+    s.join(room.code);send(room);
+  }));
+  // Fired automatically by the client right after its socket reconnects (a new
+  // socket.id) if it remembers being in a room. Reattaches the SAME seat/slot/turn
+  // to the new socket instead of leaving the player stranded outside every room.
+  s.on("rejoin",safe(({code,clientId})=>{
+    const room=rooms.get(String(code||"").trim().toUpperCase());
+    if(!room)return;
+    const cid=String(clientId||"");
+    if(!cid)return;
+    const player=room.players.find(p=>p.clientId&&p.clientId===cid);
+    if(!player)return;
+    clearGrace(player);
+    player.id=s.id;player.connected=true;
     s.join(room.code);send(room);
   }));
   s.on("startGame",safe(()=>{
@@ -461,9 +496,11 @@ io.on("connection",s=>{
   }));
   s.on("disconnect",safe(()=>{
     const room=roomOf(s);if(!room)return;
-    room.players=room.players.filter(p=>p.id!==s.id);
-    if(!room.players.length){clearTimer(room);rooms.delete(room.code);return;}
-    room.started=false;room.winner=null;room.turn=0;clearTimer(room);send(room);
+    const player=room.players.find(p=>p.id===s.id);
+    if(!player)return;
+    player.connected=false;
+    scheduleGrace(room,player);
+    send(room); // other players see a "reconnecting" state instead of a hard reset
   }));
 });
 

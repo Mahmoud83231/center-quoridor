@@ -1,4 +1,13 @@
 const socket=io();
+// A persistent per-tab id, independent of socket.id. socket.id changes every time
+// the underlying connection drops and reconnects (backgrounding the tab on mobile,
+// a brief wifi hiccup, etc.) -- which used to silently strand that player outside
+// their own room with no error and no way to move or place a wall. This id survives
+// reconnects, so the server can seat the new socket right back into the same slot.
+let clientId=localStorage.getItem("cq_client_id");
+if(!clientId){clientId=(crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random().toString(16).slice(2));localStorage.setItem("cq_client_id",clientId);}
+let myRoomCode=null;
+socket.on("connect",()=>{ if(myRoomCode) socket.emit("rejoin",{code:myRoomCode,clientId}); });
 let state=null,myIndex=-1,prevState=null;
 let muted=(localStorage.getItem("cq_muted")==="1");
 let knownWallKeys=new Set();
@@ -200,8 +209,8 @@ $("#modeCenter").onclick=()=>setMode("center");
 $("#modeClassic").onclick=()=>setMode("classic");
 
 /* ---------- socket wiring ---------- */
-$("#create").onclick=()=>{ensureAudio();socket.emit("createRoom",{name:($("#name").value||"Player 1").trim(),token:account?.token,mode:selectedMode});};
-$("#join").onclick=()=>{ensureAudio();socket.emit("joinRoom",{name:($("#name").value||"Player").trim(),code:($("#code").value||"").trim(),token:account?.token});};
+$("#create").onclick=()=>{ensureAudio();socket.emit("createRoom",{name:($("#name").value||"Player 1").trim(),token:account?.token,mode:selectedMode,clientId});};
+$("#join").onclick=()=>{ensureAudio();socket.emit("joinRoom",{name:($("#name").value||"Player").trim(),code:($("#code").value||"").trim(),token:account?.token,clientId});};
 $("#start").onclick=()=>socket.emit("startGame");
 $("#restart").onclick=()=>socket.emit("restart");
 socket.on("errorMsg",m=>{toast(m);sndError();});
@@ -213,6 +222,7 @@ socket.on("kicked",({reason})=>{
 });
 socket.on("state",s=>{
   prevState=state;state=s;myIndex=s.players.findIndex(p=>p.id===socket.id);
+  myRoomCode=s.code;
   clearHoverPreview();
   reactToChange(prevState,s);
   render();
@@ -258,7 +268,7 @@ function render(){
     return `
     <div class="pitem ${isActive?"active":""}" data-slot="${p.slot}" style="border-inline-start:3px solid ${p.color}">
       <span class="dot" style="background:${p.color};color:${p.color}"></span>
-      <span class="pname"><b>${esc(p.name)}${p.account?' <span class="acct-badge" title="حساب مسجل">✓</span>':""}${p.isHost?' <span class="host-badge" title="المضيف">👑</span>':""}${i===myIndex?" (أنت)":""}</b><span class="pmeta">🧱 ${state.wallsLeft[i]} حاجز متبقي</span></span>
+      <span class="pname"><b>${esc(p.name)}${p.account?' <span class="acct-badge" title="حساب مسجل">✓</span>':""}${p.isHost?' <span class="host-badge" title="المضيف">👑</span>':""}${i===myIndex?" (أنت)":""}${p.connected===false?' <span class="host-badge" title="بيرجع تاني...">🔄</span>':""}</b><span class="pmeta">🧱 ${state.wallsLeft[i]} حاجز متبقي</span></span>
       <span class="pitem-right"><span class="clock ${low?"low":""}" data-clock="${p.slot}">${fmtClock(remain)}</span></span>
     </div>`;
   }).join("");
@@ -304,8 +314,11 @@ setInterval(updateClocks,250);
 function myTurnNow(){ return !!(state&&state.started&&state.winner===null&&state.turn===myIndex); }
 function wallsLeftMine(){
   if(!state||!state.started||myIndex<0)return 0;
-  const slot=state.players[myIndex].slot;
-  return state.wallsLeft[slot]??0;
+  // wallsLeft is tracked server-side per player-order index (same index turn
+  // cycles through), NOT per physical board slot -- those two only coincide for
+  // whichever player happens to be host. Using slot here returned someone else's
+  // wall count for the other 3 players in a 4-player game.
+  return state.wallsLeft[myIndex]??0;
 }
 function updateWallTiles(){
   const left=wallsLeftMine();
