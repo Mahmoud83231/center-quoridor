@@ -6,14 +6,19 @@ const socket=io();
 // reconnects, so the server can seat the new socket right back into the same slot.
 let clientId=localStorage.getItem("cq_client_id");
 if(!clientId){clientId=(crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random().toString(16).slice(2));localStorage.setItem("cq_client_id",clientId);}
-// Which room we're seated in, kept in localStorage (not just a JS variable) so
-// it survives a full page reload or the tab being closed and reopened -- not
-// just socket.io's own silent reconnect. Without this, coming back after
-// closing the tab dropped you straight into the empty lobby with no way back
-// into a match that was still running; "rejoin" below only ever fired for the
-// in-memory case (wifi blip, tab backgrounded), never for a fresh page load.
-let myRoomCode=localStorage.getItem("cq_room_code")||null;
-socket.on("connect",()=>{ if(myRoomCode) socket.emit("rejoin",{code:myRoomCode,clientId}); });
+// Which room we're seated in. Kept in localStorage (not just a JS variable)
+// so a saved seat survives a full page reload or the tab being closed and
+// reopened -- but a fresh page load should NOT silently drop the person back
+// into a match without asking; that's jarring if they closed the tab on
+// purpose. So `myRoomCode` itself only gets set once we're actually back in
+// a room (by us confirming a resume, or by a normal create/join), and
+// `sessionActive` is what makes the "connect" handler below auto-rejoin --
+// it's only true for socket.io's own silent reconnects during a session
+// that's already running (wifi blip, tab backgrounded), never for the very
+// first connect after a fresh page load.
+let myRoomCode=null;
+let sessionActive=false;
+socket.on("connect",()=>{ if(myRoomCode&&sessionActive) socket.emit("rejoin",{code:myRoomCode,clientId}); });
 let state=null,myIndex=-1,prevState=null;
 let muted=(localStorage.getItem("cq_muted")==="1");
 let knownWallKeys=new Set();
@@ -260,13 +265,32 @@ $("#modeClassic").onclick=()=>setMode("classic");
   if(!code)return;
   history.replaceState(null,"",location.pathname);
   // An invite link means "join a specific room by name", not "resume my own
-  // seat" -- don't let a leftover saved room from a previous session hijack
-  // this with an automatic rejoin the moment we connect.
-  myRoomCode=null;localStorage.removeItem("cq_room_code");
+  // seat" -- clear any saved room so the resume banner below doesn't compete
+  // with it.
+  localStorage.removeItem("cq_room_code");
   $("#code").value=code;
   toast("اكتب اسمك ودوس \"دخول\" عشان تدخل غرفة صاحبك.");
   $("#name").focus();
 })();
+
+/* ---------- resume banner: reconnecting after a page reload is a deliberate,
+   visible choice, not something that happens to you the instant the page
+   loads ---------- */
+function hideResumeBanner(){ $("#resumeBanner").hidden=true; }
+(function initResumeBanner(){
+  const saved=localStorage.getItem("cq_room_code");
+  if(saved) $("#resumeBanner").hidden=false;
+})();
+$("#resumeBtn").onclick=()=>{
+  const saved=localStorage.getItem("cq_room_code");
+  if(!saved){ hideResumeBanner(); return; }
+  myRoomCode=saved;sessionActive=true;
+  socket.emit("rejoin",{code:myRoomCode,clientId});
+};
+$("#dismissResumeBtn").onclick=()=>{
+  localStorage.removeItem("cq_room_code");
+  hideResumeBanner();
+};
 function inviteLink(code){ return `${location.origin}${location.pathname}?room=${encodeURIComponent(code)}`; }
 async function copyInviteLink(){
   if(!state?.code)return;
@@ -283,15 +307,19 @@ $("#inviteBtn").onclick=copyInviteLink;
 $("#create").onclick=()=>{ensureAudio();socket.emit("createRoom",{name:($("#name").value||"Player 1").trim(),token:account?.token,mode:selectedMode,clientId});};
 $("#join").onclick=()=>{ensureAudio();socket.emit("joinRoom",{name:($("#name").value||"Player").trim(),code:($("#code").value||"").trim(),token:account?.token,clientId});};
 $("#start").onclick=()=>socket.emit("startGame");
-$("#restart").onclick=()=>{ if(!$("#restart").disabled) socket.emit("restart"); };
+$("#restart").onclick=()=>{ if(!$("#restart").disabled) socket.emit("requestRematch"); };
+$("#rematchAccept").onclick=()=>socket.emit("rematchResponse",{accept:true});
+$("#rematchDecline").onclick=()=>socket.emit("rematchResponse",{accept:false});
+socket.on("rematchDeclined",({name})=>toast(`${name} رفض يلعب مرة تانية.`));
 $("#leaveGame").onclick=()=>socket.emit("leaveRoom");
 $("#surrenderBtn").onclick=()=>{
   if(confirm("متأكد إنك عايز تستسلم؟ هتخسر المباراة على طول.")) socket.emit("leaveRoom");
 };
 socket.on("errorMsg",m=>{toast(m);sndError();});
 function backToLobby(){
-  state=null;myIndex=-1;myRoomCode=null;
+  state=null;myIndex=-1;myRoomCode=null;sessionActive=false;
   localStorage.removeItem("cq_room_code");
+  hideResumeBanner();
   $("#lobby").hidden=false;$("#game").hidden=true;$("#win").hidden=true;
   $("#roomBadge").hidden=true;$("#inviteBtn").hidden=true;
 }
@@ -305,7 +333,9 @@ socket.on("leftRoom",()=>{ backToLobby(); });
 socket.on("state",s=>{
   prevState=state;state=s;myIndex=s.players.findIndex(p=>p.id===socket.id);
   myRoomCode=s.code;
+  sessionActive=true;
   localStorage.setItem("cq_room_code",s.code);
+  hideResumeBanner();
   clearHoverPreview();
   reactToChange(prevState,s);
   render();
@@ -372,19 +402,44 @@ function render(){
         .map(i=>state.players[i]?esc(state.players[i].name):null).filter(Boolean).join("، ");
       const many=state.winners&&state.winners.length>1;
       $("#winText").innerHTML=`<h2>${names} ${many?"كسبوا":"كسب"}!</h2><p>${esc(state.forfeitedName||"لاعب")} خرج من المباراة ومرجعش خلال ٣٠ ثانية.</p>`;
+    } else if(state.winReason==="surrender"){
+      const names=(state.winners&&state.winners.length?state.winners:[state.winner])
+        .map(i=>state.players[i]?esc(state.players[i].name):null).filter(Boolean).join("، ");
+      const many=state.winners&&state.winners.length>1;
+      $("#winText").innerHTML=`<h2>${names} ${many?"كسبوا":"كسب"}!</h2><p>${esc(state.forfeitedName||"لاعب")} استسلم.</p>`;
     } else {
       $("#winText").innerHTML=`<h2>${esc(state.players[state.winner].name)} كسب!</h2><p>وصل للمربع الأصفر في المنتصف.</p>`;
     }
-    // "Play again" only makes sense if there's someone left to play against,
-    // and only the host can actually trigger it. Grey it out otherwise
-    // (rather than hiding it) so it's clear *why* you can't restart, e.g.
-    // right after the other side forfeited and got dropped from the room --
-    // pressing "exit" is the only way out of that state.
-    const restartBtn=$("#restart");
+    // "Play again" needs everyone still at the table to actually agree, not
+    // just the host hitting a button and forcing a fresh match on people who
+    // never said yes. See requestRematch/rematchResponse.
+    const restartBtn=$("#restart"),leaveBtn=$("#leaveGame"),note=$("#winActionsNote");
+    const rematchPrompt=$("#rematchPrompt"),rematchPromptText=$("#rematchPromptText");
     const enoughPlayers=state.players.length>=2;
-    restartBtn.hidden=myIndex!==0;
-    restartBtn.disabled=!enoughPlayers;
-    restartBtn.title=enoughPlayers?"":"محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية — دوس خروج.";
+    const myId=socket.id;
+    if(state.rematch){
+      const iRequested=state.rematch.requestedBy===myId;
+      const iAccepted=state.rematch.accepted.includes(myId);
+      restartBtn.hidden=true;
+      leaveBtn.hidden=false;
+      if(iRequested||iAccepted){
+        rematchPrompt.hidden=true;
+        note.hidden=false;
+        note.textContent="في انتظار موافقة باقي اللاعبين...";
+      }else{
+        const requester=state.players.find(p=>p.id===state.rematch.requestedBy);
+        rematchPromptText.textContent=`${requester?requester.name:"لاعب"} عايز يلعب مرة تانية، موافق؟`;
+        rematchPrompt.hidden=false;
+        note.hidden=true;
+      }
+    }else{
+      rematchPrompt.hidden=true;
+      note.hidden=true;
+      restartBtn.hidden=myIndex!==0;
+      restartBtn.disabled=!enoughPlayers;
+      restartBtn.title=enoughPlayers?"":"محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية — دوس خروج.";
+      leaveBtn.hidden=false;
+    }
     clearHoverPreview();clearDragPreview();
   } else $("#win").hidden=true;
 }

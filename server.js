@@ -321,6 +321,7 @@ function newRoom(code,mode){
     positions:slots.map(x=>({r:x.r,c:x.c})),
     walls:[],wallsLeft:Array(MAX).fill(WALLS),turn:0,started:false,winner:null,
     history:[],timeLeft:Array(MAX).fill(PLAYER_TIME_MS),turnStartedAt:null,turnDeadline:null,_timer:null,
+    rematch:null,
     createdAt:Date.now()
   };
 }
@@ -460,13 +461,16 @@ function pub(room){
     positions:room.positions,walls:room.walls,wallsLeft:room.wallsLeft,
     turn:room.turn,started:room.started,winner:room.winner,
     winners:room.winners||null,winReason:room.winReason||null,forfeitedName:room.forfeitedName||null,
-    history:room.history,turnDeadline:room.turnDeadline,timeLeft:room.timeLeft,playerTimeMs:PLAYER_TIME_MS
+    history:room.history,turnDeadline:room.turnDeadline,timeLeft:room.timeLeft,playerTimeMs:PLAYER_TIME_MS,
+    // Who asked for a rematch and who's already said yes -- everyone still
+    // seated has to agree before it actually restarts (see requestRematch).
+    rematch:room.rematch?{requestedBy:room.rematch.requestedBy,accepted:[...room.rematch.accepted]}:null
   };
 }
 function send(room){io.to(room.code).emit("state",pub(room));}
 function clearWinState(room){ room.winner=null;room.winners=null;room.winReason=null;room.forfeitedName=null; }
 function forceEndRoom(room){
-  room.started=false;clearWinState(room);clearTimer(room);
+  room.started=false;clearWinState(room);clearTimer(room);room.rematch=null;
   room.positions=room.slots.map(x=>({r:x.r,c:x.c}));
   room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;room.history=[];
   send(room);
@@ -478,6 +482,7 @@ function forceKickFromRoom(room,targetId){
   io.to(target.id).emit("kicked",{});
   const tSock=io.sockets.sockets.get(target.id);if(tSock)tSock.leave(room.code);
   room.players=room.players.filter(p=>p.id!==target.id);
+  room.rematch=null;
   if(room.started){room.started=false;clearWinState(room);clearTimer(room);}
   room.turn=0;send(room);
   return true;
@@ -509,7 +514,8 @@ function scheduleGrace(room,player){
 // Shared by both the disconnect-grace timeout and a deliberate "leave" from
 // the win/lobby screen: removes a player's seat and, if a match was actually
 // in progress, hands the win to everyone still left in the room.
-function removePlayerAndSettle(room,player){
+function removePlayerAndSettle(room,player,reason){
+  room.rematch=null; // the lineup changed -- any pending rematch ask is void
   if(room.started&&room.winner!==null){
     // Match already ended (someone's looking at the win screen) -- just drop
     // the empty seat. Leave the win/winner state alone so whoever's still
@@ -535,7 +541,7 @@ function removePlayerAndSettle(room,player){
   if(!room.players.length){rooms.delete(room.code);return;}
   room.winners=room.players.map((_,i)=>i);
   room.winner=room.winners[0];
-  room.winReason="forfeit";
+  room.winReason=reason==="surrender"?"surrender":"forfeit";
   room.forfeitedName=leftName;
   const winnerAccounts=room.players.map(p=>p.account).filter(Boolean);
   for(const key of allAccountsBefore) qIncGamesWins.run(1,winnerAccounts.includes(key)?1:0,key);
@@ -543,7 +549,7 @@ function removePlayerAndSettle(room,player){
 }
 function forfeitDisconnectedPlayer(room,player){
   if(player.connected)return; // reconnected in the meantime
-  removePlayerAndSettle(room,player);
+  removePlayerAndSettle(room,player,"disconnect");
 }
 
 io.on("connection",s=>{
@@ -583,6 +589,7 @@ io.on("connection",s=>{
     if(!player){ s.emit("kicked",{reason:"forfeit"}); return; }
     clearGrace(player);
     player.id=s.id;player.connected=true;
+    room.rematch=null; // stale accepted/requester ids would no longer match anyone
     s.join(room.code);send(room);
   }));
   s.on("startGame",safe(()=>{
@@ -625,18 +632,34 @@ io.on("connection",s=>{
     armTimer(room);
     send(room);
   }));
-  s.on("restart",safe(()=>{
+  // Host asks for a rematch, but it isn't instant -- everyone still seated
+  // has to agree first (see rematchResponse) instead of getting yanked into
+  // a fresh board they never asked for.
+  s.on("requestRematch",safe(()=>{
     const room=roomOf(s);if(!room||room.players[0].id!==s.id)return;
-    // Need at least 2 people actually sitting at the table -- otherwise (e.g.
-    // right after the other player forfeited and got dropped from the room)
-    // this used to let the lone remaining player "restart" into a match
-    // against nobody. The client greys the button out for this exact case,
-    // but we still guard it here since the button state is just UI.
     if(room.players.length<2) return s.emit("errorMsg","محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية.");
-    room.positions=room.slots.map(x=>({r:x.r,c:x.c}));
-    room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;clearWinState(room);room.started=true;
-    room.timeLeft=Array(MAX).fill(PLAYER_TIME_MS);
-    room.history=[];armTimer(room);send(room);
+    room.rematch={requestedBy:s.id,accepted:new Set([s.id])};
+    send(room);
+  }));
+  s.on("rematchResponse",safe(({accept})=>{
+    const room=roomOf(s);if(!room||!room.rematch)return;
+    const player=room.players.find(p=>p.id===s.id);if(!player)return;
+    if(!accept){
+      const declinerName=player.name;
+      room.rematch=null;
+      io.to(room.code).emit("rematchDeclined",{name:declinerName});
+      send(room);
+      return;
+    }
+    room.rematch.accepted.add(s.id);
+    if(room.players.every(p=>room.rematch.accepted.has(p.id))){
+      room.rematch=null;
+      room.positions=room.slots.map(x=>({r:x.r,c:x.c}));
+      room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;clearWinState(room);room.started=true;
+      room.timeLeft=Array(MAX).fill(PLAYER_TIME_MS);
+      room.history=[];armTimer(room);
+    }
+    send(room);
   }));
   // Deliberate "exit" from the win screen (or lobby). Unlike a dropped
   // connection, there's no grace period here -- the player chose to leave, so
@@ -649,7 +672,7 @@ io.on("connection",s=>{
     clearGrace(player);
     s.leave(room.code);
     s.emit("leftRoom",{});
-    removePlayerAndSettle(room,player);
+    removePlayerAndSettle(room,player,"surrender");
   }));
   s.on("disconnect",safe(()=>{
     const room=roomOf(s);if(!room)return;

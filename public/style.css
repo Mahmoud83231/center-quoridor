@@ -52,6 +52,10 @@ input:focus{border-color:#556074}
 
 /* ---------- lobby ---------- */
 .lobby{width:min(920px,100%);margin:36px auto 0}
+.resume-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:16px 20px;margin-bottom:16px;border:1px solid #2a5a3f;background:#0f1d16}
+.resume-banner-text b{display:block;margin-bottom:3px}
+.resume-banner-text p{margin:0;color:var(--muted);font-size:13px}
+.resume-banner-actions{display:flex;gap:9px;flex-wrap:wrap}
 .lobby-grid{display:grid;grid-template-columns:1.05fr 1fr;gap:18px;align-items:stretch}
 .lobby-intro{padding:30px 28px;display:flex;flex-direction:column;justify-content:center}
 .lobby-intro-badge{display:inline-block;align-self:flex-start;background:#ffb02022;color:var(--warn);border:1px solid #ffb02044;font-size:10.5px;font-weight:800;padding:5px 11px;border-radius:999px;margin-bottom:12px}
@@ -181,6 +185,8 @@ input:focus{border-color:#556074}
 .win-actions button{margin-top:0;min-width:130px}
 .win-actions button:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.6)}
 .win-actions button:disabled:hover{background:#151a22;transform:none}
+.rematch-prompt{border:1px solid #303743;border-radius:12px;padding:14px;margin:14px 0;background:#151a22}
+.rematch-prompt p{margin:0 0 12px;font-weight:700}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes popIn{from{opacity:0;transform:scale(.85) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes trophyBounce{0%,100%{transform:translateY(0)}30%{transform:translateY(-8px)}50%{transform:translateY(0)}70%{transform:translateY(-4px)}}

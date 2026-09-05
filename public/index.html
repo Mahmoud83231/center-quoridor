@@ -35,6 +35,16 @@
 </header>
 
 <section id="lobby" class="lobby">
+  <div id="resumeBanner" class="card resume-banner" hidden>
+    <div class="resume-banner-text">
+      <b>عندك مباراة لسه شغالة</b>
+      <p>ممكن تكون قدام خصمك دلوقتي وهو مستني ترجع.</p>
+    </div>
+    <div class="resume-banner-actions">
+      <button id="resumeBtn" class="primary">إعادة الاتصال بالمباراة</button>
+      <button id="dismissResumeBtn" class="ghost">تجاهل</button>
+    </div>
+  </div>
   <div class="lobby-grid">
     <div class="lobby-intro card">
       <div class="lobby-intro-badge">مين هيوصل الأول؟</div>
@@ -119,7 +129,18 @@
 </main>
 </div>
 
-<div id="win" class="modal" hidden><div class="modal-card"><div class="trophy">🏆</div><div id="winText"></div><div class="win-actions"><button id="restart" class="primary">اللعب مرة اخري</button><button id="leaveGame" class="ghost">خروج</button></div></div></div>
+<div id="win" class="modal" hidden><div class="modal-card">
+  <div class="trophy">🏆</div><div id="winText"></div>
+  <div id="rematchPrompt" class="rematch-prompt" hidden>
+    <p id="rematchPromptText"></p>
+    <div class="win-actions"><button id="rematchAccept" class="primary">موافق، تاني</button><button id="rematchDecline" class="ghost">لأ</button></div>
+  </div>
+  <div id="winActions" class="win-actions">
+    <button id="restart" class="primary">اللعب مرة اخري</button>
+    <button id="leaveGame" class="ghost">خروج</button>
+  </div>
+  <p id="winActionsNote" class="small" hidden></p>
+</div></div>
 
 <div id="authModal" class="modal" hidden>
   <div class="modal-card auth-card">
