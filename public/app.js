@@ -259,6 +259,18 @@ $("#modeCenter").onclick=()=>setMode("center");
 $("#modeClassic").onclick=()=>setMode("classic");
 
 /* ---------- invite link (join a room by URL, not just by typing the code) ---------- */
+// Whoever sent the link just wants the other person to land straight in the
+// room -- not fill a field and hunt for a button. If we already know their
+// name (logged in, or they've played here before) we join immediately. The
+// only time we still need a tap is the very first visit from someone with no
+// saved name at all, and even then a single Enter press is enough.
+let pendingInviteCode=null;
+function doJoin(name,code){
+  ensureAudio();
+  const finalName=(name||"Player").trim();
+  if(finalName) localStorage.setItem("cq_name",finalName);
+  socket.emit("joinRoom",{name:finalName,code,token:account?.token,clientId});
+}
 (function handleInviteLink(){
   const p=new URLSearchParams(location.search);
   const code=(p.get("room")||"").trim().toUpperCase();
@@ -268,10 +280,24 @@ $("#modeClassic").onclick=()=>setMode("classic");
   // seat" -- clear any saved room so the resume banner below doesn't compete
   // with it.
   localStorage.removeItem("cq_room_code");
+  hideResumeBanner();
   $("#code").value=code;
-  toast("اكتب اسمك ودوس \"دخول\" عشان تدخل غرفة صاحبك.");
-  $("#name").focus();
+  const savedName=account?.username||localStorage.getItem("cq_name")||"";
+  if(savedName){
+    $("#name").value=savedName;
+    doJoin(savedName,code);
+  }else{
+    pendingInviteCode=code;
+    toast("اكتب اسمك ودوس Enter عشان تدخل غرفة صاحبك على طول.");
+    $("#name").focus();
+  }
 })();
+$("#name").addEventListener("keydown",e=>{
+  if(e.key!=="Enter")return;
+  if(pendingInviteCode){ const c=pendingInviteCode;pendingInviteCode=null;doJoin($("#name").value,c); }
+  else if(($("#code").value||"").trim()) $("#join").click();
+  else $("#create").click();
+});
 
 /* ---------- resume banner: reconnecting after a page reload is a deliberate,
    visible choice, not something that happens to you the instant the page
@@ -304,8 +330,13 @@ async function copyInviteLink(){
 $("#inviteBtn").onclick=copyInviteLink;
 
 /* ---------- socket wiring ---------- */
-$("#create").onclick=()=>{ensureAudio();socket.emit("createRoom",{name:($("#name").value||"Player 1").trim(),token:account?.token,mode:selectedMode,clientId});};
-$("#join").onclick=()=>{ensureAudio();socket.emit("joinRoom",{name:($("#name").value||"Player").trim(),code:($("#code").value||"").trim(),token:account?.token,clientId});};
+$("#create").onclick=()=>{
+  ensureAudio();
+  const finalName=($("#name").value||"Player 1").trim();
+  if(finalName) localStorage.setItem("cq_name",finalName);
+  socket.emit("createRoom",{name:finalName,token:account?.token,mode:selectedMode,clientId});
+};
+$("#join").onclick=()=>doJoin($("#name").value||"Player",($("#code").value||"").trim());
 $("#start").onclick=()=>socket.emit("startGame");
 $("#restart").onclick=()=>{ if(!$("#restart").disabled) socket.emit("requestRematch"); };
 $("#rematchAccept").onclick=()=>socket.emit("rematchResponse",{accept:true});

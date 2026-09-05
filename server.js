@@ -565,15 +565,35 @@ io.on("connection",s=>{
     const room=rooms.get(String(code||"").trim().toUpperCase());
     if(!room)return s.emit("errorMsg","الغرفة غير موجودة.");
     if(room.started)return s.emit("errorMsg","المباراة بدأت بالفعل.");
-    const cap=room.mode==="classic"?2:MAX;
-    if(room.players.length>=cap)return s.emit("errorMsg",room.mode==="classic"?"الغرفة دي 1 ضد 1 بس، مكتملة.":"الغرفة مكتملة.");
+    const cid=String(clientId||"").slice(0,64)||null;
     const acc=accountByToken(token);
     const accKey=acc?sessions.get(String(token||"")):null;
+    // Guard against the same person taking two seats in one room -- e.g. the
+    // same browser (same clientId, shared across its tabs) hitting "join"
+    // twice with two different typed names, or the same logged-in account
+    // opening the invite link again from a second tab. Without this a
+    // "1v1" room could silently end up with the same human occupying both
+    // seats, or a 2-player room appearing to have 3 people in it.
+    const already=room.players.find(p=>(cid&&p.clientId===cid)||(accKey&&p.account===accKey));
+    if(already){
+      if(cid&&already.clientId===cid){
+        // Same tab/browser re-sending join (e.g. it never actually left) --
+        // just reattach this socket to the existing seat instead of adding
+        // a new one.
+        clearGrace(already);
+        already.id=s.id;already.connected=true;
+        s.join(room.code);send(room);
+        return;
+      }
+      return s.emit("errorMsg","انت أصلاً موجود في الغرفة دي.");
+    }
+    const cap=room.mode==="classic"?2:MAX;
+    if(room.players.length>=cap)return s.emit("errorMsg",room.mode==="classic"?"الغرفة دي 1 ضد 1 بس، مكتملة.":"الغرفة مكتملة.");
     const slots=SLOT_ORDER_BY_COUNT[room.players.length+1];
     const used=new Set(room.players.map(p=>p.slot));
     const slot=slots.find(x=>!used.has(x));
     const finalName=acc?acc.username:(String(name||`Player ${room.players.length+1}`).trim().slice(0,18)||`Player ${room.players.length+1}`);
-    room.players.push({id:s.id,name:finalName,slot,account:accKey||null,clientId:String(clientId||"").slice(0,64)||null,connected:true});
+    room.players.push({id:s.id,name:finalName,slot,account:accKey||null,clientId:cid,connected:true});
     s.join(room.code);send(room);
   }));
   // Fired automatically by the client right after its socket reconnects (a new
