@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Center Quoridor</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="page">
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">◆</span><div><h1>Center Quoridor</h1><p>٤ لاعبين • السباق إلى المركز</p></div></div>
+  <div class="topbar-actions">
+    <button id="lbBtn" class="iconbtn" title="قائمة المتصدرين">🏆</button>
+    <button id="muteBtn" class="iconbtn" title="كتم الصوت">🔊</button>
+    <div id="roomBadge" class="room" hidden>ROOM —</div>
+    <div id="acctChip" class="acct-chip">
+      <button id="acctBtn" class="acctbtn">
+        <span id="acctAvatar" class="acct-avatar">👤</span>
+        <span id="acctLabel">تسجيل الدخول</span>
+      </button>
+      <div id="acctMenu" class="acct-menu" hidden>
+        <div class="acct-menu-name" id="acctMenuName"></div>
+        <div class="acct-menu-stats">
+          <div class="stat"><b id="acctWins">0</b><span>فوز</span></div>
+          <div class="stat"><b id="acctGames">0</b><span>مباراة</span></div>
+          <div class="stat"><b id="acctWinrate">—</b><span>نسبة الفوز</span></div>
+        </div>
+        <div class="acct-menu-since" id="acctSince"></div>
+        <a id="acctDashLink" class="acct-menu-item" href="/admin.html" hidden>⚙ لوحة التحكم</a>
+        <button id="logoutBtn" class="acct-menu-item">تسجيل الخروج</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="lobby" class="lobby">
+  <div class="lobby-grid">
+    <div class="lobby-intro card">
+      <div class="lobby-intro-badge">مين هيوصل الأول؟</div>
+      <h2>Center Quoridor</h2>
+      <p class="lobby-tag">٤ لاعبين، كل واحد جاي من ناحية، وكله بيتسابق على نفس المربع الأصفر في النص.</p>
+      <ul class="lobby-points">
+        <li><span>🚶</span>اتحرك خانة، أو اقفز فوق لاعب قدامك</li>
+        <li><span>🧱</span>حط حواجز تعطّل خصومك، بس متقفلش الطريق خالص</li>
+        <li><span>⏱️</span>كل لاعب معاه ٥ دقايق بس لكل المباراة</li>
+        <li><span>🏆</span>أول واحد يوصل للمركز الأصفر يكسب</li>
+      </ul>
+    </div>
+    <div class="lobby-form card">
+      <h3 class="lobby-form-title">ابدأ اللعب</h3>
+      <input id="name" maxlength="18" placeholder="اكتب اسمك">
+      <div class="mode-tabs">
+        <button id="modeCenter" class="mode-tab active" data-mode="center">مركز — حتى ٤ لاعبين</button>
+        <button id="modeClassic" class="mode-tab" data-mode="classic">1 ضد 1 كلاسيك</button>
+      </div>
+      <p class="mode-hint" id="modeHint">كل اللاعبين بيتسابقوا لنفس المربع الأصفر في النص.</p>
+      <button id="create" class="primary full">إنشاء غرفة جديدة</button>
+      <div class="divider"><span>أو ادخل غرفة صاحبك</span></div>
+      <div class="join-row">
+        <input id="code" maxlength="6" placeholder="كود الغرفة">
+        <button id="join">دخول</button>
+      </div>
+      <div id="players" class="waiting"></div>
+      <button id="start" class="primary full" hidden>ابدأ اللعبة</button>
+      <div id="lobbyMsg" class="small">اللاعبون 0/4</div>
+    </div>
+  </div>
+</section>
+
+<main id="game" hidden>
+  <aside class="sidebar card">
+    <div id="matchInfo" class="match-info"></div>
+    <div class="side-block">
+      <h3>اللاعبون</h3>
+      <div id="playerList"></div>
+    </div>
+
+    <div class="side-block walls-panel">
+      <h3>حط حاجز</h3>
+      <div class="wall-tiles">
+        <div id="wallTileH" class="wall-tile" data-o="h">
+          <div class="wall-tile-bar h"></div>
+          <span>أفقي</span>
+          <span class="wall-tile-count" id="wallCountH">0</span>
+        </div>
+        <div id="wallTileV" class="wall-tile" data-o="v">
+          <div class="wall-tile-bar v"></div>
+          <span>رأسي</span>
+          <span class="wall-tile-count" id="wallCountV">0</span>
+        </div>
+      </div>
+      <p class="wall-hint">🖱️ قرّب الماوس من الفراغ بين خانتين، هتشوف معاينة الحاجز، ودوس عشان تحطه<br>📱 اسحب حاجز من هنا وسيبه في اللوحة</p>
+    </div>
+
+    <div class="side-block">
+      <h3>سجل الحركات</h3>
+      <div id="history" class="history"></div>
+    </div>
+
+    <div class="rules">
+      <h3>القواعد</h3>
+      <p>• تتحرك خانة أو تقفز فوق لاعب.</p>
+      <p>• قرّب الماوس من الفراغ بين خانتين تشوف معاينة الحاجز ودوس تحطه — أو اسحبه من القايمة.</p>
+      <p>• الحاجز بطول خانتين.</p>
+      <p>• ممنوع قفل كل الطرق للمركز.</p>
+      <p id="ruleGoal">• 🟨 الوصول للمربع الأصفر في النص يفوز.</p>
+      <p>• كل لاعب معاه ٥ دقايق بس، بتتوقف لما دورك يخلص.</p>
+    </div>
+  </aside>
+
+  <section class="arena">
+    <div class="turn-row"><div id="turnText" class="turn-text"></div></div>
+    <div id="board" class="board"></div>
+    <div id="boardHelp" class="board-help">قرّب من حافة الخانة تشوف معاينة الحاجز ودوس تحطه • اسحب حاجز من القايمة يمين لو على الموبايل</div>
+  </section>
+</main>
+</div>
+
+<div id="win" class="modal" hidden><div class="modal-card"><div class="trophy">🏆</div><div id="winText"></div><button id="restart" class="primary">لعبوا تاني</button></div></div>
+
+<div id="authModal" class="modal" hidden>
+  <div class="modal-card auth-card">
+    <div class="auth-tabs">
+      <button id="tabLogin" class="auth-tab active">تسجيل الدخول</button>
+      <button id="tabRegister" class="auth-tab">حساب جديد</button>
+    </div>
+    <div id="authError" class="auth-error" hidden></div>
+    <input id="authUser" maxlength="18" placeholder="اسم المستخدم">
+    <input id="authPass" type="password" maxlength="64" placeholder="كلمة السر">
+    <button id="authSubmit" class="primary full">تسجيل الدخول</button>
+    <button id="authClose" class="ghost full">إلغاء</button>
+  </div>
+</div>
+
+<div id="lbModal" class="modal" hidden>
+  <div class="modal-card lb-card">
+    <h2>🏆 قائمة المتصدرين</h2>
+    <div id="lbList" class="lb-list"></div>
+    <button id="lbClose" class="ghost full">قفل</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="/socket.io/socket.io.js"></script><script src="/app.js"></script>
+</body></html>

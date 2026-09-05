@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: center-quoridor
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: ADMIN_USERNAME
+        sync: false

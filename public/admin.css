@@ -1,0 +1,52 @@
+.admin-page{width:min(980px,95vw)}
+.small-btn{padding:6px 11px;font-size:11.5px;display:inline-flex;align-items:center;gap:4px;text-decoration:none}
+.gate-card{width:min(360px,92vw);margin:60px auto;padding:28px;text-align:center}
+.gate-card h2{margin:0 0 6px}
+.gate-card .small{margin-bottom:16px}
+.gate-card input{width:100%;margin-bottom:10px}
+
+.admin-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.astat{padding:16px;text-align:center}
+.astat b{display:block;font-size:24px;color:var(--accent)}
+.astat span{font-size:11px;color:var(--muted);margin-top:4px;display:block}
+
+.admin-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;align-items:start}
+.admin-panel{padding:18px}
+.admin-panel h3{margin:0 0 12px;font-size:14px;text-transform:uppercase;letter-spacing:.5px;color:#c3c9d1}
+.admin-panel input{width:100%;margin-bottom:12px}
+
+.rooms-list,.users-list{display:flex;flex-direction:column;gap:10px;max-height:66vh;overflow-y:auto}
+.rooms-list::-webkit-scrollbar,.users-list::-webkit-scrollbar{width:6px}
+.rooms-list::-webkit-scrollbar-thumb,.users-list::-webkit-scrollbar-thumb{background:#2a313c;border-radius:6px}
+.empty-note{color:#5c6470;font-size:12.5px;padding:8px}
+
+.room-card{background:#11161e;border:1px solid #252c35;border-radius:11px;padding:12px}
+.room-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+.room-code{font-weight:900;font-size:13.5px;letter-spacing:1px}
+.room-tags{display:flex;gap:6px}
+.tag{font-size:10px;padding:3px 8px;border-radius:999px;background:#0c1015;border:1px solid #2a313c;color:#9aa2ad}
+.tag.live{background:#20df781a;border-color:#20df7855;color:var(--accent)}
+.tag.mode{background:#13a8ff1a;border-color:#13a8ff55;color:#5fc4ff}
+.room-players{display:flex;flex-direction:column;gap:5px;margin-bottom:9px}
+.room-player{display:flex;justify-content:space-between;align-items:center;font-size:12px;background:#0c1015;border-radius:7px;padding:6px 9px}
+.room-player-name{display:flex;align-items:center;gap:5px}
+.room-actions{display:flex;gap:7px}
+.room-actions button{flex:1;padding:7px 8px;font-size:11.5px}
+
+.user-row{background:#11161e;border:1px solid #252c35;border-radius:11px;padding:11px 12px}
+.user-row-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.user-name{font-weight:800;font-size:13px;display:flex;align-items:center;gap:6px}
+.user-meta{font-size:10.5px;color:var(--muted)}
+.role-badge{font-size:10px;padding:2px 8px;border-radius:999px;border:1px solid #2a313c;background:#0c1015}
+.role-badge.owner{color:var(--warn);border-color:#ffb02055;background:#ffb0201a}
+.role-badge.mod{color:var(--accent);border-color:#20df7855;background:#20df781a}
+.role-badge.banned{color:var(--danger);border-color:#f52b6255;background:#f52b621a}
+.user-actions{display:flex;gap:7px}
+.user-actions button{flex:1;padding:7px 8px;font-size:11.5px}
+.user-actions button.on{background:#f52b621a;border-color:#f52b6255;color:var(--danger)}
+.user-actions button.mod-on{background:#20df781a;border-color:#20df7855;color:var(--accent)}
+
+@media(max-width:760px){
+  .admin-grid{grid-template-columns:1fr}
+  .admin-stats{grid-template-columns:1fr}
+}

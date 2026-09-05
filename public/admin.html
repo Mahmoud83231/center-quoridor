@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>لوحة التحكم — Center Quoridor</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+<div class="page admin-page">
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">⚙</span><div><h1>لوحة التحكم</h1><p id="whoami">Center Quoridor</p></div></div>
+    <div class="topbar-actions">
+      <a href="/" class="ghost small-btn">↩ رجوع للعبة</a>
+      <button id="adminLogout" class="ghost small-btn" hidden>خروج</button>
+    </div>
+  </header>
+
+  <div id="gate" class="card gate-card">
+    <h2>تسجيل دخول لوحة التحكم</h2>
+    <p class="small">لازم تدخل بحساب المالك أو حساب مشرف.</p>
+    <div id="gateError" class="auth-error" hidden></div>
+    <input id="gateUser" placeholder="اسم المستخدم">
+    <input id="gatePass" type="password" placeholder="كلمة السر">
+    <button id="gateSubmit" class="primary full">دخول</button>
+  </div>
+
+  <div id="denied" class="card gate-card" hidden>
+    <h2>معندكش صلاحية</h2>
+    <p class="small">الحساب ده مش مالك ولا مشرف على اللعبة.</p>
+    <a href="/" class="ghost full">رجوع للعبة</a>
+  </div>
+
+  <main id="dash" hidden>
+    <div class="admin-stats">
+      <div class="astat card"><b id="statRooms">0</b><span>غرفة شغالة دلوقتي</span></div>
+      <div class="astat card"><b id="statPlayers">0</b><span>لاعب متصل</span></div>
+      <div class="astat card"><b id="statUsers">0</b><span>حساب مسجل (في نتيجة البحث)</span></div>
+    </div>
+
+    <div class="admin-grid">
+      <section class="card admin-panel">
+        <h3>الغرف الشغالة دلوقتي</h3>
+        <div id="roomsList" class="rooms-list"></div>
+      </section>
+
+      <section class="card admin-panel">
+        <h3>المستخدمين</h3>
+        <input id="userSearch" placeholder="دور على يوزر...">
+        <div id="usersList" class="users-list"></div>
+      </section>
+    </div>
+  </main>
+</div>
+<div id="toast"></div>
+<script src="/admin.js"></script>
+</body></html>
