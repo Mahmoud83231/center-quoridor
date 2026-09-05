@@ -41,8 +41,8 @@
 .role-badge.owner{color:var(--warn);border-color:#ffb02055;background:#ffb0201a}
 .role-badge.mod{color:var(--accent);border-color:#20df7855;background:#20df781a}
 .role-badge.banned{color:var(--danger);border-color:#f52b6255;background:#f52b621a}
-.user-actions{display:flex;gap:7px}
-.user-actions button{flex:1;padding:7px 8px;font-size:11.5px}
+.user-actions{display:flex;gap:7px;flex-wrap:wrap}
+.user-actions button{flex:1;padding:7px 8px;font-size:11.5px;margin-bottom:0}
 .user-actions button.on{background:#f52b621a;border-color:#f52b6255;color:var(--danger)}
 .user-actions button.mod-on{background:#20df781a;border-color:#20df7855;color:var(--accent)}
 

@@ -100,6 +100,7 @@ async function loadUsers(q){
         <div class="user-actions">
           <button class="ghost ${u.role==="mod"?"mod-on":""}" data-act="rolemod" data-user="${esc(u.username)}" data-cur="${u.role}">${u.role==="mod"?"🛡️ إلغاء الإشراف":"🛡️ خليه مشرف"}</button>
           <button class="ghost ${u.banned?"on":""}" data-act="ban" data-user="${esc(u.username)}" data-cur="${u.banned?"1":"0"}">${u.banned?"✅ فك الحظر":"🚫 احظره"}</button>
+          <button class="ghost danger-ghost" data-act="delete" data-user="${esc(u.username)}">🗑️ امسح الحساب نهائي</button>
         </div>`:"";
       return `
       <div class="user-row">
@@ -139,6 +140,12 @@ document.addEventListener("click",async e=>{
       const d=await res.json();
       if(!res.ok||d.error){toast(d.error||"حصل خطأ.");return;}
       toast(makeMod?"بقى مشرف.":"اتشال من الإشراف.");loadUsers($("#userSearch").value.trim());
+    }else if(act==="delete"){
+      if(!confirm(`متأكد إنك عايز تمسح حساب ${btn.dataset.user} نهائي؟ الحساب وكل بياناته (الفوز والمباريات) هتتمسح ومفيش رجوع.`))return;
+      const res=await fetch(`/api/admin/users/${encodeURIComponent(btn.dataset.user)}/delete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:account.token})});
+      const d=await res.json();
+      if(!res.ok||d.error){toast(d.error||"حصل خطأ.");return;}
+      toast("اتمسح الحساب نهائي.");loadUsers($("#userSearch").value.trim());
     }
   }catch(e){toast("مشكلة في الاتصال بالسيرفر.");}
 });

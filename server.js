@@ -105,6 +105,7 @@ const qSetVerifyToken=db.prepare("UPDATE users SET verifyToken=?, verifyExpires=
 const qHasOwner=db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='owner'");
 const qSetRole=db.prepare("UPDATE users SET role=? WHERE key=?");
 const qSetBanned=db.prepare("UPDATE users SET banned=? WHERE key=?");
+const qDeleteUser=db.prepare("DELETE FROM users WHERE key=?");
 const qIncGamesWins=db.prepare("UPDATE users SET games=games+?, wins=wins+? WHERE key=?");
 const qSearchUsers=db.prepare("SELECT * FROM users WHERE username LIKE ? ORDER BY createdAt DESC LIMIT 100");
 const qLeaderboard=db.prepare("SELECT username,wins,games FROM users WHERE games>0 ORDER BY wins DESC, (CAST(wins AS REAL)/games) DESC LIMIT 50");
@@ -306,6 +307,27 @@ app.post("/api/admin/users/:username/role",(req,res)=>{
   const role=(req.body||{}).role==="mod"?"mod":"user";
   qSetRole.run(role,key);
   res.json({ok:true,role});
+});
+// Permanently erases the account row (and its stats) from the database --
+// unlike a ban, this can't be undone, so it's owner-only and double-checked
+// on the client with a confirm() before it ever reaches here.
+app.post("/api/admin/users/:username/delete",(req,res)=>{
+  const requester=requireRole((req.body||{}).token,["owner"]);
+  if(!requester) return res.status(403).json({error:"مسح الحسابات بس للمالك."});
+  const key=String(req.params.username||"").toLowerCase();
+  const u=qGetUser.get(key);
+  if(!u) return res.status(404).json({error:"المستخدم مش موجود."});
+  if(u.role==="owner") return res.status(400).json({error:"مينفعش تمسح حساب المالك."});
+  // Drop their seat in any room they're currently sitting in, same as a kick.
+  for(const room of rooms.values()){
+    const target=room.players.find(p=>p.account===key);
+    if(target) forceKickFromRoom(room,target.id);
+  }
+  // Any device still logged in as this account gets treated as logged-out
+  // on its very next request instead of quietly keeping access.
+  for(const [tok,k] of sessions) if(k===key) sessions.delete(tok);
+  qDeleteUser.run(key);
+  res.json({ok:true});
 });
 
 /* ============================= game logic ============================= */
@@ -655,9 +677,13 @@ io.on("connection",s=>{
   // Host asks for a rematch, but it isn't instant -- everyone still seated
   // has to agree first (see rematchResponse) instead of getting yanked into
   // a fresh board they never asked for.
+  // Any seated player can propose a rematch (not just the host) -- everyone
+  // else still has to agree before it actually restarts (see rematchResponse).
   s.on("requestRematch",safe(()=>{
-    const room=roomOf(s);if(!room||room.players[0].id!==s.id)return;
+    const room=roomOf(s);if(!room)return;
+    const player=room.players.find(p=>p.id===s.id);if(!player)return;
     if(room.players.length<2) return s.emit("errorMsg","محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية.");
+    if(room.rematch) return; // a request is already pending -- ignore duplicate clicks
     room.rematch={requestedBy:s.id,accepted:new Set([s.id])};
     send(room);
   }));

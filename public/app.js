@@ -466,7 +466,7 @@ function render(){
     }else{
       rematchPrompt.hidden=true;
       note.hidden=true;
-      restartBtn.hidden=myIndex!==0;
+      restartBtn.hidden=false;
       restartBtn.disabled=!enoughPlayers;
       restartBtn.title=enoughPlayers?"":"محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية — دوس خروج.";
       leaveBtn.hidden=false;
@@ -782,7 +782,13 @@ function initBoardInteractions(){
     const{rect,cw,ch}=boardMetrics();
     const x=e.clientX-rect.left,y=e.clientY-rect.top;
     const n=boardN(),k=myK();
-    const dispSlot=canHover?nearestWallSlot(x,y,cw,ch):null;
+    // Always try to resolve a wall gap first, regardless of the "pointer:
+    // fine" hover-capability check above -- that check only decides whether
+    // to show a live green/red preview while moving the mouse, but some
+    // devices (hybrid touch/mouse laptops, some browsers) misreport it, which
+    // used to silently disable wall placement by click entirely on those
+    // devices even though a real mouse was being used.
+    const dispSlot=nearestWallSlot(x,y,cw,ch);
     const slot=dispSlot?wallRotate(dispSlot.r,dispSlot.c,dispSlot.o,invK(k),n):null;
     if(slot){
       if(!myTurnNow()){sndError();return;}
