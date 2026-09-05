@@ -506,11 +506,22 @@ function scheduleGrace(room,player){
   player.graceUntil=Date.now()+DISCONNECT_GRACE_MS;
   player._graceTimer=setTimeout(()=>forfeitDisconnectedPlayer(room,player),DISCONNECT_GRACE_MS);
 }
-function forfeitDisconnectedPlayer(room,player){
-  if(player.connected)return; // reconnected in the meantime
-  if(!room.started||room.winner!==null){
-    // Not an active match (still in the lobby, or the match was already
-    // decided) -- just drop the empty seat, nothing to forfeit.
+// Shared by both the disconnect-grace timeout and a deliberate "leave" from
+// the win/lobby screen: removes a player's seat and, if a match was actually
+// in progress, hands the win to everyone still left in the room.
+function removePlayerAndSettle(room,player){
+  if(room.started&&room.winner!==null){
+    // Match already ended (someone's looking at the win screen) -- just drop
+    // the empty seat. Leave the win/winner state alone so whoever's still
+    // around keeps seeing the result they already earned; only "restart"
+    // should ever clear that.
+    room.players=room.players.filter(p=>p!==player);
+    if(!room.players.length){clearTimer(room);rooms.delete(room.code);return;}
+    send(room);
+    return;
+  }
+  if(!room.started){
+    // Still in the lobby -- just drop the empty seat, nothing to forfeit.
     room.players=room.players.filter(p=>p!==player);
     if(!room.players.length){clearTimer(room);rooms.delete(room.code);return;}
     room.turn=0;send(room);
@@ -529,6 +540,10 @@ function forfeitDisconnectedPlayer(room,player){
   const winnerAccounts=room.players.map(p=>p.account).filter(Boolean);
   for(const key of allAccountsBefore) qIncGamesWins.run(1,winnerAccounts.includes(key)?1:0,key);
   send(room);
+}
+function forfeitDisconnectedPlayer(room,player){
+  if(player.connected)return; // reconnected in the meantime
+  removePlayerAndSettle(room,player);
 }
 
 io.on("connection",s=>{
@@ -612,10 +627,29 @@ io.on("connection",s=>{
   }));
   s.on("restart",safe(()=>{
     const room=roomOf(s);if(!room||room.players[0].id!==s.id)return;
+    // Need at least 2 people actually sitting at the table -- otherwise (e.g.
+    // right after the other player forfeited and got dropped from the room)
+    // this used to let the lone remaining player "restart" into a match
+    // against nobody. The client greys the button out for this exact case,
+    // but we still guard it here since the button state is just UI.
+    if(room.players.length<2) return s.emit("errorMsg","محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية.");
     room.positions=room.slots.map(x=>({r:x.r,c:x.c}));
     room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;clearWinState(room);room.started=true;
     room.timeLeft=Array(MAX).fill(PLAYER_TIME_MS);
     room.history=[];armTimer(room);send(room);
+  }));
+  // Deliberate "exit" from the win screen (or lobby). Unlike a dropped
+  // connection, there's no grace period here -- the player chose to leave, so
+  // we remove their seat immediately. If a match was still in progress (this
+  // can also be reached before the win screen appears), everyone else left in
+  // the room wins, same as a disconnect forfeit.
+  s.on("leaveRoom",safe(()=>{
+    const room=roomOf(s);if(!room)return;
+    const player=room.players.find(p=>p.id===s.id);if(!player)return;
+    clearGrace(player);
+    s.leave(room.code);
+    s.emit("leftRoom",{});
+    removePlayerAndSettle(room,player);
   }));
   s.on("disconnect",safe(()=>{
     const room=roomOf(s);if(!room)return;

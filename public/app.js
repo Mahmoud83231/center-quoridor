@@ -6,7 +6,13 @@ const socket=io();
 // reconnects, so the server can seat the new socket right back into the same slot.
 let clientId=localStorage.getItem("cq_client_id");
 if(!clientId){clientId=(crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random().toString(16).slice(2));localStorage.setItem("cq_client_id",clientId);}
-let myRoomCode=null;
+// Which room we're seated in, kept in localStorage (not just a JS variable) so
+// it survives a full page reload or the tab being closed and reopened -- not
+// just socket.io's own silent reconnect. Without this, coming back after
+// closing the tab dropped you straight into the empty lobby with no way back
+// into a match that was still running; "rejoin" below only ever fired for the
+// in-memory case (wifi blip, tab backgrounded), never for a fresh page load.
+let myRoomCode=localStorage.getItem("cq_room_code")||null;
 socket.on("connect",()=>{ if(myRoomCode) socket.emit("rejoin",{code:myRoomCode,clientId}); });
 let state=null,myIndex=-1,prevState=null;
 let muted=(localStorage.getItem("cq_muted")==="1");
@@ -253,6 +259,10 @@ $("#modeClassic").onclick=()=>setMode("classic");
   const code=(p.get("room")||"").trim().toUpperCase();
   if(!code)return;
   history.replaceState(null,"",location.pathname);
+  // An invite link means "join a specific room by name", not "resume my own
+  // seat" -- don't let a leftover saved room from a previous session hijack
+  // this with an automatic rejoin the moment we connect.
+  myRoomCode=null;localStorage.removeItem("cq_room_code");
   $("#code").value=code;
   toast("اكتب اسمك ودوس \"دخول\" عشان تدخل غرفة صاحبك.");
   $("#name").focus();
@@ -273,17 +283,29 @@ $("#inviteBtn").onclick=copyInviteLink;
 $("#create").onclick=()=>{ensureAudio();socket.emit("createRoom",{name:($("#name").value||"Player 1").trim(),token:account?.token,mode:selectedMode,clientId});};
 $("#join").onclick=()=>{ensureAudio();socket.emit("joinRoom",{name:($("#name").value||"Player").trim(),code:($("#code").value||"").trim(),token:account?.token,clientId});};
 $("#start").onclick=()=>socket.emit("startGame");
-$("#restart").onclick=()=>socket.emit("restart");
+$("#restart").onclick=()=>{ if(!$("#restart").disabled) socket.emit("restart"); };
+$("#leaveGame").onclick=()=>socket.emit("leaveRoom");
+$("#surrenderBtn").onclick=()=>{
+  if(confirm("متأكد إنك عايز تستسلم؟ هتخسر المباراة على طول.")) socket.emit("leaveRoom");
+};
 socket.on("errorMsg",m=>{toast(m);sndError();});
-socket.on("kicked",({reason})=>{
+function backToLobby(){
   state=null;myIndex=-1;myRoomCode=null;
+  localStorage.removeItem("cq_room_code");
   $("#lobby").hidden=false;$("#game").hidden=true;$("#win").hidden=true;
   $("#roomBadge").hidden=true;$("#inviteBtn").hidden=true;
-  toast(reason==="ban"?"اتعملك بان من الغرفة دي.":reason==="forfeit"?"طلعت من الغرفة عشان معملتش رجوع خلال ٣٠ ثانية.":"المضيف طردك من الغرفة.");
+}
+socket.on("kicked",({reason})=>{
+  backToLobby();
+  toast(reason==="ban"?"اتعملك بان من الغرفة دي.":reason==="forfeit"?"مقدرش يرجعك للغرفة (يمكن المباراة خلصت أو الغرفة مش موجودة).":"المضيف طردك من الغرفة.");
 });
+// Fired back at us after we deliberately hit "خروج" (leaveRoom) -- unlike
+// "kicked" this is our own choice, so no toast, just drop back to the lobby.
+socket.on("leftRoom",()=>{ backToLobby(); });
 socket.on("state",s=>{
   prevState=state;state=s;myIndex=s.players.findIndex(p=>p.id===socket.id);
   myRoomCode=s.code;
+  localStorage.setItem("cq_room_code",s.code);
   clearHoverPreview();
   reactToChange(prevState,s);
   render();
@@ -336,6 +358,9 @@ function render(){
   }).join("");
 
   $("#turnText").textContent=state.winner!==null?"انتهت المباراة":state.turn===myIndex?"دورك":`دور ${esc(state.players[state.turn].name)}`;
+  // Only worth offering while the match is actually live -- once there's a
+  // winner the win screen's own "خروج" button takes over.
+  $("#surrenderBtn").hidden=state.winner!==null;
   renderHistory();
   updateWallTiles();
   drawBoard();
@@ -350,6 +375,16 @@ function render(){
     } else {
       $("#winText").innerHTML=`<h2>${esc(state.players[state.winner].name)} كسب!</h2><p>وصل للمربع الأصفر في المنتصف.</p>`;
     }
+    // "Play again" only makes sense if there's someone left to play against,
+    // and only the host can actually trigger it. Grey it out otherwise
+    // (rather than hiding it) so it's clear *why* you can't restart, e.g.
+    // right after the other side forfeited and got dropped from the room --
+    // pressing "exit" is the only way out of that state.
+    const restartBtn=$("#restart");
+    const enoughPlayers=state.players.length>=2;
+    restartBtn.hidden=myIndex!==0;
+    restartBtn.disabled=!enoughPlayers;
+    restartBtn.title=enoughPlayers?"":"محتاجين ٢ لاعبين على الأقل عشان تلعبوا مرة تانية — دوس خروج.";
     clearHoverPreview();clearDragPreview();
   } else $("#win").hidden=true;
 }

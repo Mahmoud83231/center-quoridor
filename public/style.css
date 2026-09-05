@@ -29,6 +29,8 @@ button:active{transform:translateY(0)}
 .primary:hover{filter:brightness(1.08)}
 .ghost{background:transparent;border-color:#303743;color:#c3c9d1}
 .ghost:hover{background:#151a22}
+.danger-ghost{color:#ff8fa3;border-color:#4a2030;margin-bottom:14px}
+.danger-ghost:hover{background:#2a1520;border-color:var(--danger)}
 input{background:#11161e;color:#fff;border:1px solid #303743;border-radius:9px;padding:11px 13px;outline:0;transition:border-color .15s}
 input:focus{border-color:#556074}
 
@@ -175,6 +177,10 @@ input:focus{border-color:#556074}
 .trophy{font-size:44px;animation:trophyBounce .9s ease .15s 2}
 .modal-card h2{margin:8px 0}
 .modal-card button{margin-top:14px}
+.win-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.win-actions button{margin-top:0;min-width:130px}
+.win-actions button:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.6)}
+.win-actions button:disabled:hover{background:#151a22;transform:none}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes popIn{from{opacity:0;transform:scale(.85) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes trophyBounce{0%,100%{transform:translateY(0)}30%{transform:translateY(-8px)}50%{transform:translateY(0)}70%{transform:translateY(-4px)}}
