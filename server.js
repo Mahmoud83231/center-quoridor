@@ -42,7 +42,13 @@ function isWin(room,slot,r,c){
 const rooms=new Map();
 
 /* ============================= accounts (real SQLite DB) ============================= */
-const DATA_DIR=path.join(__dirname,"data");
+// If a Railway volume is mounted (RAILWAY_VOLUME_MOUNT_PATH), keep the DB file
+// there so it survives redeploys -- Railway's regular container filesystem is
+// wiped on every deploy, a plain local "data/" folder would lose every account
+// the moment you push a new version.
+const DATA_DIR=process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH,"data")
+  : path.join(__dirname,"data");
 if(!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR,{recursive:true});
 const db=new DatabaseSync(path.join(DATA_DIR,"quoridor.db"));
 db.exec(`
@@ -58,6 +64,19 @@ db.exec(`
     createdAt INTEGER NOT NULL
   );
 `);
+// Email support was added after the original table. ALTER TABLE ADD COLUMN is
+// re-run on every boot and just fails harmlessly (caught below) once the
+// column already exists -- this keeps old databases upgrading in place with
+// no manual migration step.
+for(const stmt of [
+  "ALTER TABLE users ADD COLUMN email TEXT",
+  "ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE users ADD COLUMN verifyToken TEXT",
+  "ALTER TABLE users ADD COLUMN verifyExpires INTEGER"
+]){ try{ db.exec(stmt); }catch(e){ /* column already exists -- fine */ } }
+// Partial unique index (ignores NULL) so legacy accounts migrated without an
+// email don't collide with each other, while every *new* email must be unique.
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL");
 // One-off migration from the old users.json flat file, if one exists and the
 // DB is still empty (upgrade path for anyone running an older copy).
 (function migrateLegacyJson(){
@@ -78,7 +97,11 @@ db.exec(`
 })();
 
 const qGetUser=db.prepare("SELECT * FROM users WHERE key=?");
-const qInsertUser=db.prepare(`INSERT INTO users(key,username,salt,hash,wins,games,role,banned,createdAt) VALUES(?,?,?,?,0,0,'user',0,?)`);
+const qGetUserByEmail=db.prepare("SELECT * FROM users WHERE email=?");
+const qGetUserByVerifyToken=db.prepare("SELECT * FROM users WHERE verifyToken=?");
+const qInsertUserEmail=db.prepare(`INSERT INTO users(key,username,salt,hash,wins,games,role,banned,createdAt,email,verified,verifyToken,verifyExpires) VALUES(?,?,?,?,0,0,'user',0,?,?,?,?,?)`);
+const qSetVerified=db.prepare("UPDATE users SET verified=1, verifyToken=NULL, verifyExpires=NULL WHERE key=?");
+const qSetVerifyToken=db.prepare("UPDATE users SET verifyToken=?, verifyExpires=? WHERE key=?");
 const qHasOwner=db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='owner'");
 const qSetRole=db.prepare("UPDATE users SET role=? WHERE key=?");
 const qSetBanned=db.prepare("UPDATE users SET banned=? WHERE key=?");
@@ -99,7 +122,39 @@ function maybePromoteOwner(key){
 
 function hashPassword(pw,salt){ return crypto.scryptSync(String(pw),salt,64).toString("hex"); }
 function makeToken(){ return crypto.randomBytes(24).toString("hex"); }
-function publicAccount(u){ return {username:u.username,wins:u.wins||0,games:u.games||0,createdAt:u.createdAt||null,role:u.role||"user"}; }
+function publicAccount(u){ return {username:u.username,email:u.email||null,wins:u.wins||0,games:u.games||0,createdAt:u.createdAt||null,role:u.role||"user"}; }
+
+/* ---- real email verification ---- */
+// Only turns on when actual SMTP creds are configured (see README). Without
+// them we fall back to a "dev mode" where accounts are auto-verified and the
+// verification link is just printed to the server console, so local testing
+// still works without an email provider.
+const SMTP_CONFIGURED=!!(process.env.SMTP_HOST&&process.env.SMTP_USER&&process.env.SMTP_PASS);
+const MAIL_FROM=process.env.MAIL_FROM||process.env.SMTP_USER||"no-reply@center-quoridor.local";
+let mailTransporter=null;
+if(SMTP_CONFIGURED){
+  const nodemailer=require("nodemailer");
+  mailTransporter=nodemailer.createTransport({
+    host:process.env.SMTP_HOST,
+    port:Number(process.env.SMTP_PORT||587),
+    secure:Number(process.env.SMTP_PORT||587)===465,
+    auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}
+  });
+  console.log("[mail] SMTP configured -- new accounts must verify their email before logging in.");
+}else{
+  console.warn("[mail] SMTP env vars not set -- DEV MODE: new accounts are auto-verified and verification links are only printed here, not emailed.");
+}
+function publicUrl(req){
+  return (process.env.PUBLIC_URL||`${req.protocol}://${req.get("host")}`).replace(/\/$/,"");
+}
+async function sendVerificationEmail(req,toEmail,username,token){
+  const link=`${publicUrl(req)}/api/verify-email?token=${encodeURIComponent(token)}`;
+  if(!mailTransporter){ console.log(`[mail][DEV] verification link for ${toEmail}: ${link}`); return; }
+  await mailTransporter.sendMail({
+    from:MAIL_FROM,to:toEmail,subject:"فعّل حسابك على Center Quoridor",
+    html:`<p>أهلاً ${username}،</p><p>دوس على الرابط ده عشان تفعل حسابك وتقدر تسجل دخول:</p><p><a href="${link}">${link}</a></p><p>الرابط صالح لمدة 24 ساعة. لو ما طلبتش الحساب ده، تجاهل الإيميل.</p>`
+  });
+}
 const sessions=new Map(); // token -> lowercase username key
 function accountByToken(token){
   const key=sessions.get(String(token||""));
@@ -111,35 +166,67 @@ function requireRole(token,roles){
   return roles.includes(u.role||"user")?u:null;
 }
 
-app.post("/api/register",(req,res)=>{
-  const {username,password}=req.body||{};
+app.post("/api/register",async(req,res)=>{
+  const {username,email,password}=req.body||{};
   const uname=String(username||"").trim();
   const key=uname.toLowerCase();
+  const mail=String(email||"").trim().toLowerCase();
   if(uname.length<3||uname.length>18) return res.status(400).json({error:"الاسم لازم يكون من 3 لـ18 حرف."});
   if(!/^[a-zA-Z0-9_\u0600-\u06FF ]+$/.test(uname)) return res.status(400).json({error:"اسم المستخدم فيه رموز غير مسموحة."});
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return res.status(400).json({error:"اكتب بريد إلكتروني صحيح."});
   if(String(password||"").length<4) return res.status(400).json({error:"كلمة السر لازم تكون 4 حروف على الأقل."});
   if(qGetUser.get(key)) return res.status(400).json({error:"اسم المستخدم دا محجوز، جرب اسم تاني."});
+  if(qGetUserByEmail.get(mail)) return res.status(400).json({error:"البريد الإلكتروني ده متسجل بحساب تاني."});
   const salt=crypto.randomBytes(16).toString("hex");
   const hash=hashPassword(password,salt);
-  qInsertUser.run(key,uname,salt,hash,Date.now());
+  const verified=SMTP_CONFIGURED?0:1;
+  const verifyToken=SMTP_CONFIGURED?makeToken():null;
+  const verifyExpires=SMTP_CONFIGURED?Date.now()+24*60*60*1000:null;
+  qInsertUserEmail.run(key,uname,salt,hash,Date.now(),mail,verified,verifyToken,verifyExpires);
   maybePromoteOwner(key);
+  if(SMTP_CONFIGURED){
+    try{ await sendVerificationEmail(req,mail,uname,verifyToken); }
+    catch(e){ console.error("[mail] failed to send verification email",e); }
+    return res.json({ok:true,requireVerification:true,message:"ابعتنالك رابط تفعيل على بريدك الإلكتروني. افتحه عشان تقدر تسجل دخول."});
+  }
   const token=makeToken();
   sessions.set(token,key);
   res.json({token,...publicAccount(qGetUser.get(key))});
 });
 app.post("/api/login",(req,res)=>{
-  const {username,password}=req.body||{};
-  const key=String(username||"").trim().toLowerCase();
-  const u=qGetUser.get(key);
-  if(!u) return res.status(400).json({error:"اسم المستخدم أو كلمة السر غلط."});
+  const {email,password}=req.body||{};
+  const mail=String(email||"").trim().toLowerCase();
+  const u=qGetUserByEmail.get(mail);
+  if(!u) return res.status(400).json({error:"البريد الإلكتروني أو كلمة السر غلط."});
   const hash=hashPassword(password,u.salt);
   const a=Buffer.from(hash,"hex"),b=Buffer.from(u.hash,"hex");
-  if(a.length!==b.length||!crypto.timingSafeEqual(a,b)) return res.status(400).json({error:"اسم المستخدم أو كلمة السر غلط."});
+  if(a.length!==b.length||!crypto.timingSafeEqual(a,b)) return res.status(400).json({error:"البريد الإلكتروني أو كلمة السر غلط."});
   if(u.banned) return res.status(403).json({error:"الحساب ده محظور."});
-  maybePromoteOwner(key);
+  if(SMTP_CONFIGURED&&!u.verified) return res.status(403).json({error:"لازم تفعل بريدك الإلكتروني الأول.",needsVerification:true});
+  maybePromoteOwner(u.key);
   const token=makeToken();
-  sessions.set(token,key);
-  res.json({token,...publicAccount(qGetUser.get(key))});
+  sessions.set(token,u.key);
+  res.json({token,...publicAccount(u)});
+});
+app.get("/api/verify-email",(req,res)=>{
+  const token=String(req.query.token||"");
+  const u=token?qGetUserByVerifyToken.get(token):null;
+  if(!u||!u.verifyExpires||u.verifyExpires<Date.now()) return res.redirect("/?verify_error=1");
+  qSetVerified.run(u.key);
+  res.redirect("/?verified=1");
+});
+app.post("/api/resend-verification",async(req,res)=>{
+  const mail=String((req.body||{}).email||"").trim().toLowerCase();
+  const u=mail?qGetUserByEmail.get(mail):null;
+  if(u&&!u.verified&&SMTP_CONFIGURED){
+    const verifyToken=makeToken(),verifyExpires=Date.now()+24*60*60*1000;
+    qSetVerifyToken.run(verifyToken,verifyExpires,u.key);
+    try{ await sendVerificationEmail(req,mail,u.username,verifyToken); }
+    catch(e){ console.error("[mail] resend failed",e); }
+  }
+  // Always respond ok whether or not the email is registered, so this can't be
+  // used to probe which emails have accounts.
+  res.json({ok:true,message:"لو الإيميل ده متسجل وموش مفعّل، هيوصلك رابط تفعيل جديد."});
 });
 app.get("/api/me",(req,res)=>{
   const u=accountByToken(req.query.token);
@@ -369,15 +456,17 @@ function autoPlay(room){
 function pub(room){
   return {
     code:room.code,mode:room.mode,n:room.n,c:room.c,
-    players:room.players.map((p,i)=>({id:p.id,name:p.name,index:i,slot:p.slot,color:room.slots[p.slot].color,account:p.account||null,isHost:i===0,connected:p.connected!==false})),
+    players:room.players.map((p,i)=>({id:p.id,name:p.name,index:i,slot:p.slot,color:room.slots[p.slot].color,account:p.account||null,isHost:i===0,connected:p.connected!==false,graceUntil:p.graceUntil||null})),
     positions:room.positions,walls:room.walls,wallsLeft:room.wallsLeft,
     turn:room.turn,started:room.started,winner:room.winner,
+    winners:room.winners||null,winReason:room.winReason||null,forfeitedName:room.forfeitedName||null,
     history:room.history,turnDeadline:room.turnDeadline,timeLeft:room.timeLeft,playerTimeMs:PLAYER_TIME_MS
   };
 }
 function send(room){io.to(room.code).emit("state",pub(room));}
+function clearWinState(room){ room.winner=null;room.winners=null;room.winReason=null;room.forfeitedName=null; }
 function forceEndRoom(room){
-  room.started=false;room.winner=null;clearTimer(room);
+  room.started=false;clearWinState(room);clearTimer(room);
   room.positions=room.slots.map(x=>({r:x.r,c:x.c}));
   room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;room.history=[];
   send(room);
@@ -385,33 +474,61 @@ function forceEndRoom(room){
 function forceKickFromRoom(room,targetId){
   const target=room.players.find(p=>p.id===targetId);
   if(!target)return false;
+  clearGrace(target);
   io.to(target.id).emit("kicked",{});
   const tSock=io.sockets.sockets.get(target.id);if(tSock)tSock.leave(room.code);
   room.players=room.players.filter(p=>p.id!==target.id);
-  if(room.started){room.started=false;room.winner=null;clearTimer(room);}
+  if(room.started){room.started=false;clearWinState(room);clearTimer(room);}
   room.turn=0;send(room);
   return true;
 }
 
 // Grace period given to a player whose socket drops (tab backgrounded/locked on
-// mobile, brief wifi hiccup, etc.) before we actually remove them from the room.
+// mobile, brief wifi hiccup, etc.) before we actually treat them as gone.
 // Without this, socket.io's own auto-reconnect silently hands the browser tab a
 // BRAND NEW socket id, and since nothing here re-associated that new socket with
-// the old room seat, the old "disconnect" handler used to rip the player out and
-// force the whole match back to the lobby instantly -- which looks, from every
-// other player's screen, exactly like "the game just stopped responding" the
-// moment turn passed to whoever had gone idle waiting for their turn.
-const DISCONNECT_GRACE_MS=25000;
-function clearGrace(player){ if(player._graceTimer){clearTimeout(player._graceTimer);player._graceTimer=null;} }
+// the old room seat, a dropped connection used to rip the player out instantly --
+// which looks, from every other player's screen, exactly like "the game just
+// stopped responding" the moment turn passed to whoever had gone idle.
+//
+// If they make it back within the window (see "rejoin" below), they're seated
+// right back in their old slot with the game exactly as they left it. If they
+// don't, and a match was actually in progress, everyone still in the room wins
+// together -- for a 2-player game that's simply "the other player wins"; in a
+// 3-4 player center-mode game, every player still connected wins.
+const DISCONNECT_GRACE_MS=30000;
+function clearGrace(player){
+  if(player._graceTimer){clearTimeout(player._graceTimer);player._graceTimer=null;}
+  player.graceUntil=null;
+}
 function scheduleGrace(room,player){
   clearGrace(player);
-  player._graceTimer=setTimeout(()=>{
-    if(player.connected)return; // reconnected in the meantime
+  player.graceUntil=Date.now()+DISCONNECT_GRACE_MS;
+  player._graceTimer=setTimeout(()=>forfeitDisconnectedPlayer(room,player),DISCONNECT_GRACE_MS);
+}
+function forfeitDisconnectedPlayer(room,player){
+  if(player.connected)return; // reconnected in the meantime
+  if(!room.started||room.winner!==null){
+    // Not an active match (still in the lobby, or the match was already
+    // decided) -- just drop the empty seat, nothing to forfeit.
     room.players=room.players.filter(p=>p!==player);
     if(!room.players.length){clearTimer(room);rooms.delete(room.code);return;}
-    if(room.started){room.started=false;room.winner=null;room.turn=0;clearTimer(room);}
-    send(room);
-  },DISCONNECT_GRACE_MS);
+    room.turn=0;send(room);
+    return;
+  }
+  // Mid-match: this player is out, and every player still in the room wins.
+  const allAccountsBefore=room.players.map(p=>p.account).filter(Boolean);
+  const leftName=player.name;
+  clearTimer(room);
+  room.players=room.players.filter(p=>p!==player);
+  if(!room.players.length){rooms.delete(room.code);return;}
+  room.winners=room.players.map((_,i)=>i);
+  room.winner=room.winners[0];
+  room.winReason="forfeit";
+  room.forfeitedName=leftName;
+  const winnerAccounts=room.players.map(p=>p.account).filter(Boolean);
+  for(const key of allAccountsBefore) qIncGamesWins.run(1,winnerAccounts.includes(key)?1:0,key);
+  send(room);
 }
 
 io.on("connection",s=>{
@@ -443,18 +560,19 @@ io.on("connection",s=>{
   // to the new socket instead of leaving the player stranded outside every room.
   s.on("rejoin",safe(({code,clientId})=>{
     const room=rooms.get(String(code||"").trim().toUpperCase());
-    if(!room)return;
     const cid=String(clientId||"");
-    if(!cid)return;
+    // No room, or no seat waiting for this client id -- most likely they took
+    // longer than the 30s reconnect window and were already forfeited out.
+    if(!room||!cid){ s.emit("kicked",{reason:"forfeit"}); return; }
     const player=room.players.find(p=>p.clientId&&p.clientId===cid);
-    if(!player)return;
+    if(!player){ s.emit("kicked",{reason:"forfeit"}); return; }
     clearGrace(player);
     player.id=s.id;player.connected=true;
     s.join(room.code);send(room);
   }));
   s.on("startGame",safe(()=>{
     const room=roomOf(s);if(!room||room.players[0].id!==s.id||room.players.length<2)return;
-    room.started=true;room.turn=0;room.winner=null;room.history=[];
+    room.started=true;room.turn=0;clearWinState(room);room.history=[];
     room.timeLeft=Array(MAX).fill(PLAYER_TIME_MS);
     armTimer(room);send(room);
   }));
@@ -480,7 +598,12 @@ io.on("connection",s=>{
     if(!isInt(rr)||!isInt(cc)||(o!=="h"&&o!=="v")) return s.emit("errorMsg","مينفعش تحط الحاجز هنا.");
     if(!validWall(room,rr,cc,o))return s.emit("errorMsg","مينفعش تحط الحاجز هنا، إما فيه حاجز مكانه أو هيقفل الطريق على حد.");
     commitElapsed(room);
-    room.walls.push({r:rr,c:cc,o,player:room.turn});
+    // Store the wall's color from the placing player's own slot color, not
+    // from their player-order index -- those two only coincide by accident
+    // (order index and board slot diverge as soon as slots are handed out
+    // non-sequentially, e.g. 3-player games), which used to paint some
+    // players' walls in someone else's color.
+    room.walls.push({r:rr,c:cc,o,slot:me.slot,color:room.slots[me.slot].color});
     room.wallsLeft[room.turn]--;
     pushHistory(room,{type:"wall",name:me.name,color:room.slots[me.slot].color,r:rr,c:cc,o});
     room.turn=(room.turn+1)%room.players.length;
@@ -490,7 +613,7 @@ io.on("connection",s=>{
   s.on("restart",safe(()=>{
     const room=roomOf(s);if(!room||room.players[0].id!==s.id)return;
     room.positions=room.slots.map(x=>({r:x.r,c:x.c}));
-    room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;room.winner=null;room.started=true;
+    room.walls=[];room.wallsLeft=Array(MAX).fill(WALLS);room.turn=0;clearWinState(room);room.started=true;
     room.timeLeft=Array(MAX).fill(PLAYER_TIME_MS);
     room.history=[];armTimer(room);send(room);
   }));

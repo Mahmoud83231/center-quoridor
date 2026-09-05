@@ -152,7 +152,8 @@ input:focus{border-color:#556074}
 
 .wall{position:absolute;z-index:10;border-radius:3px;box-shadow:0 1px 5px #000b;pointer-events:none;transform-origin:center}
 .wall.h{height:9px}.wall.v{width:9px}
-.p0{background:#20df78}.p1{background:#13a8ff}.p2{background:#f52b62}.p3{background:#ff9d0a}
+/* Wall color now comes from an inline style tied to the placing player's own
+   slot color (see app.js drawBoard), not a fixed p0..p3 seat-order palette. */
 .wall-in{animation:wallIn .26s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes wallIn{0%{opacity:0;transform:scale(.25)}70%{opacity:1;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
 

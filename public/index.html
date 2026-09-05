@@ -13,6 +13,7 @@
     <button id="lbBtn" class="iconbtn" title="قائمة المتصدرين">🏆</button>
     <button id="muteBtn" class="iconbtn" title="كتم الصوت">🔊</button>
     <div id="roomBadge" class="room" hidden>ROOM —</div>
+    <button id="inviteBtn" class="iconbtn" title="نسخ رابط الدعوة" hidden>🔗</button>
     <div id="acctChip" class="acct-chip">
       <button id="acctBtn" class="acctbtn">
         <span id="acctAvatar" class="acct-avatar">👤</span>
@@ -126,8 +127,10 @@
     </div>
     <div id="authError" class="auth-error" hidden></div>
     <input id="authUser" maxlength="18" placeholder="اسم المستخدم">
+    <input id="authEmail" type="email" maxlength="120" placeholder="البريد الإلكتروني">
     <input id="authPass" type="password" maxlength="64" placeholder="كلمة السر">
     <button id="authSubmit" class="primary full">تسجيل الدخول</button>
+    <button id="authResend" class="ghost full" hidden>إعادة إرسال رابط التفعيل</button>
     <button id="authClose" class="ghost full">إلغاء</button>
   </div>
 </div>

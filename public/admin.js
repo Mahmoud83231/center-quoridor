@@ -33,10 +33,10 @@ async function checkAccess(){
 }
 
 $("#gateSubmit").onclick=async()=>{
-  const username=$("#gateUser").value.trim(),password=$("#gatePass").value;
-  if(!username||!password){$("#gateError").hidden=false;$("#gateError").textContent="اكتب اسم المستخدم وكلمة السر.";return;}
+  const email=$("#gateEmail").value.trim(),password=$("#gatePass").value;
+  if(!email||!password){$("#gateError").hidden=false;$("#gateError").textContent="اكتب البريد الإلكتروني وكلمة السر.";return;}
   try{
-    const res=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})});
+    const res=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
     const d=await res.json();
     if(!res.ok||d.error){$("#gateError").hidden=false;$("#gateError").textContent=d.error||"حصل خطأ.";return;}
     account=d;localStorage.setItem("cq_account",JSON.stringify(account));

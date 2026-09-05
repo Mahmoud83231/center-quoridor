@@ -142,39 +142,78 @@ $("#logoutBtn").onclick=()=>{
 };
 
 let authMode="login";
-function openAuth(){
-  authMode="login";syncAuthTabs();
-  $("#authError").hidden=true;$("#authUser").value="";$("#authPass").value="";
+function openAuth(mode){
+  authMode=mode==="register"?"register":"login";syncAuthTabs();
+  $("#authError").hidden=true;$("#authResend").hidden=true;
+  $("#authUser").value="";$("#authEmail").value="";$("#authPass").value="";
   $("#authModal").hidden=false;
-  $("#authUser").focus();
+  (authMode==="login"?$("#authEmail"):$("#authUser")).focus();
 }
 function closeAuth(){$("#authModal").hidden=true;}
 function syncAuthTabs(){
   $("#tabLogin").classList.toggle("active",authMode==="login");
   $("#tabRegister").classList.toggle("active",authMode==="register");
   $("#authSubmit").textContent=authMode==="login"?"تسجيل الدخول":"إنشاء الحساب";
+  // Login is by email + password only; the username field is register-only.
+  $("#authUser").hidden=authMode==="login";
+  $("#authResend").hidden=true;
 }
 $("#tabLogin").onclick=()=>{authMode="login";syncAuthTabs();$("#authError").hidden=true;};
 $("#tabRegister").onclick=()=>{authMode="register";syncAuthTabs();$("#authError").hidden=true;};
 $("#authClose").onclick=closeAuth;
 $("#authModal").addEventListener("click",e=>{if(e.target.id==="authModal") closeAuth();});
 $("#authSubmit").onclick=async()=>{
-  const username=$("#authUser").value.trim(),password=$("#authPass").value;
-  if(!username||!password){showAuthError("اكتب اسم المستخدم وكلمة السر.");return;}
+  const username=$("#authUser").value.trim(),email=$("#authEmail").value.trim(),password=$("#authPass").value;
+  if(!email||!password||(authMode==="register"&&!username)){showAuthError(authMode==="register"?"اكتب اسم المستخدم والبريد الإلكتروني وكلمة السر.":"اكتب البريد الإلكتروني وكلمة السر.");return;}
+  $("#authResend").hidden=true;
   try{
+    const body=authMode==="login"?{email,password}:{username,email,password};
     const res=await fetch(`/api/${authMode==="login"?"login":"register"}`,{
-      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password})
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)
     });
     const d=await res.json();
-    if(!res.ok||d.error){showAuthError(d.error||"حصل خطأ، حاول تاني.");return;}
+    if(!res.ok||d.error){
+      showAuthError(d.error||"حصل خطأ، حاول تاني.");
+      if(d.needsVerification) $("#authResend").hidden=false;
+      return;
+    }
+    if(d.requireVerification){
+      authMode="login";syncAuthTabs();
+      toast(d.message||"ابعتنالك رابط تفعيل على بريدك الإلكتروني.");
+      return;
+    }
     saveAccount(d);
     closeAuth();
     toast(authMode==="login"?`أهلاً ${d.username}!`:`اتعمل الحساب، أهلاً ${d.username}!`);
   }catch(e){showAuthError("مشكلة في الاتصال بالسيرفر.");}
 };
+$("#authResend").onclick=async()=>{
+  const email=$("#authEmail").value.trim();
+  if(!email){showAuthError("اكتب البريد الإلكتروني الأول.");return;}
+  try{
+    const res=await fetch("/api/resend-verification",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});
+    const d=await res.json();
+    toast(d.message||"لو الإيميل ده متسجل، هيوصلك رابط تفعيل جديد.");
+    $("#authResend").hidden=true;
+  }catch(e){toast("مشكلة في الاتصال بالسيرفر.");}
+};
 function showAuthError(m){const el=$("#authError");el.textContent=m;el.hidden=false;}
 $("#authPass").addEventListener("keydown",e=>{if(e.key==="Enter")$("#authSubmit").click();});
-$("#authUser").addEventListener("keydown",e=>{if(e.key==="Enter")$("#authPass").focus();});
+$("#authUser").addEventListener("keydown",e=>{if(e.key==="Enter")$("#authEmail").focus();});
+$("#authEmail").addEventListener("keydown",e=>{if(e.key==="Enter")$("#authPass").focus();});
+
+/* ---------- email verification landing (?verified=1 / ?verify_error=1) ---------- */
+(function handleVerifyRedirect(){
+  const p=new URLSearchParams(location.search);
+  if(p.get("verified")==="1"){
+    history.replaceState(null,"",location.pathname+location.search.replace(/[?&]verified=1/,"").replace(/^&/,"?"));
+    toast("تم تفعيل بريدك الإلكتروني! سجل دخولك دلوقتي.");
+    openAuth("login");
+  }else if(p.get("verify_error")==="1"){
+    history.replaceState(null,"",location.pathname);
+    toast("رابط التفعيل مش صحيح أو خلصت صلاحيته. جرب تسجل الدخول عشان تطلب رابط جديد.");
+  }
+})();
 
 /* ---------- leaderboard ---------- */
 $("#lbBtn").onclick=async()=>{
@@ -208,6 +247,28 @@ function setMode(m){
 $("#modeCenter").onclick=()=>setMode("center");
 $("#modeClassic").onclick=()=>setMode("classic");
 
+/* ---------- invite link (join a room by URL, not just by typing the code) ---------- */
+(function handleInviteLink(){
+  const p=new URLSearchParams(location.search);
+  const code=(p.get("room")||"").trim().toUpperCase();
+  if(!code)return;
+  history.replaceState(null,"",location.pathname);
+  $("#code").value=code;
+  toast("اكتب اسمك ودوس \"دخول\" عشان تدخل غرفة صاحبك.");
+  $("#name").focus();
+})();
+function inviteLink(code){ return `${location.origin}${location.pathname}?room=${encodeURIComponent(code)}`; }
+async function copyInviteLink(){
+  if(!state?.code)return;
+  const link=inviteLink(state.code);
+  try{
+    if(navigator.clipboard?.writeText) await navigator.clipboard.writeText(link);
+    else { const ta=document.createElement("textarea");ta.value=link;document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove(); }
+    toast("تم نسخ رابط الدعوة!");
+  }catch(e){ toast("معرفتش أنسخ الرابط، انسخه يدوي: "+link); }
+}
+$("#inviteBtn").onclick=copyInviteLink;
+
 /* ---------- socket wiring ---------- */
 $("#create").onclick=()=>{ensureAudio();socket.emit("createRoom",{name:($("#name").value||"Player 1").trim(),token:account?.token,mode:selectedMode,clientId});};
 $("#join").onclick=()=>{ensureAudio();socket.emit("joinRoom",{name:($("#name").value||"Player").trim(),code:($("#code").value||"").trim(),token:account?.token,clientId});};
@@ -215,10 +276,10 @@ $("#start").onclick=()=>socket.emit("startGame");
 $("#restart").onclick=()=>socket.emit("restart");
 socket.on("errorMsg",m=>{toast(m);sndError();});
 socket.on("kicked",({reason})=>{
-  state=null;myIndex=-1;
+  state=null;myIndex=-1;myRoomCode=null;
   $("#lobby").hidden=false;$("#game").hidden=true;$("#win").hidden=true;
-  $("#roomBadge").hidden=true;
-  toast(reason==="ban"?"اتعملك بان من الغرفة دي.":"المضيف طردك من الغرفة.");
+  $("#roomBadge").hidden=true;$("#inviteBtn").hidden=true;
+  toast(reason==="ban"?"اتعملك بان من الغرفة دي.":reason==="forfeit"?"طلعت من الغرفة عشان معملتش رجوع خلال ٣٠ ثانية.":"المضيف طردك من الغرفة.");
 });
 socket.on("state",s=>{
   prevState=state;state=s;myIndex=s.players.findIndex(p=>p.id===socket.id);
@@ -242,6 +303,7 @@ function reactToChange(prev,s){
 function render(){
   if(!state)return;
   $("#roomBadge").hidden=false;
+  $("#inviteBtn").hidden=false;
   $("#roomBadge").textContent="ROOM "+state.code+(state.mode==="classic"?" • 1v1":" • مركز");
   $("#players").innerHTML=Array.from({length:4},(_,i)=>{
     const p=state.players[i];
@@ -268,7 +330,7 @@ function render(){
     return `
     <div class="pitem ${isActive?"active":""}" data-slot="${p.slot}" style="border-inline-start:3px solid ${p.color}">
       <span class="dot" style="background:${p.color};color:${p.color}"></span>
-      <span class="pname"><b>${esc(p.name)}${p.account?' <span class="acct-badge" title="حساب مسجل">✓</span>':""}${p.isHost?' <span class="host-badge" title="المضيف">👑</span>':""}${i===myIndex?" (أنت)":""}${p.connected===false?' <span class="host-badge" title="بيرجع تاني...">🔄</span>':""}</b><span class="pmeta">🧱 ${state.wallsLeft[i]} حاجز متبقي</span></span>
+      <span class="pname"><b>${esc(p.name)}${p.account?' <span class="acct-badge" title="حساب مسجل">✓</span>':""}${p.isHost?' <span class="host-badge" title="المضيف">👑</span>':""}${i===myIndex?" (أنت)":""}${p.connected===false?` <span class="host-badge grace" title="لازم يرجع خلال المهلة وإلا يخسر" data-grace="${p.slot}">🔄 <span class="grace-count"></span></span>`:""}</b><span class="pmeta">🧱 ${state.wallsLeft[i]} حاجز متبقي</span></span>
       <span class="pitem-right"><span class="clock ${low?"low":""}" data-clock="${p.slot}">${fmtClock(remain)}</span></span>
     </div>`;
   }).join("");
@@ -280,7 +342,14 @@ function render(){
 
   if(state.winner!==null){
     $("#win").hidden=false;
-    $("#winText").innerHTML=`<h2>${esc(state.players[state.winner].name)} كسب!</h2><p>وصل للمربع الأصفر في المنتصف.</p>`;
+    if(state.winReason==="forfeit"){
+      const names=(state.winners&&state.winners.length?state.winners:[state.winner])
+        .map(i=>state.players[i]?esc(state.players[i].name):null).filter(Boolean).join("، ");
+      const many=state.winners&&state.winners.length>1;
+      $("#winText").innerHTML=`<h2>${names} ${many?"كسبوا":"كسب"}!</h2><p>${esc(state.forfeitedName||"لاعب")} خرج من المباراة ومرجعش خلال ٣٠ ثانية.</p>`;
+    } else {
+      $("#winText").innerHTML=`<h2>${esc(state.players[state.winner].name)} كسب!</h2><p>وصل للمربع الأصفر في المنتصف.</p>`;
+    }
     clearHoverPreview();clearDragPreview();
   } else $("#win").hidden=true;
 }
@@ -298,7 +367,17 @@ function renderHistory(){
 
 /* ---------- per-player clocks ---------- */
 function updateClocks(){
-  if(!state||!state.started||state.winner!==null)return;
+  if(!state||!state.started)return;
+  // Reconnect countdowns keep ticking even after the match ends by forfeit,
+  // so they run in their own pass; the turn clocks stop once there's a winner.
+  document.querySelectorAll("[data-grace]").forEach(el=>{
+    const slot=Number(el.dataset.grace);
+    const pl=state.players.find(p=>p.slot===slot);
+    const span=el.querySelector(".grace-count");
+    if(!pl||!pl.graceUntil||!span)return;
+    span.textContent=Math.max(0,Math.ceil((pl.graceUntil-Date.now())/1000))+"s";
+  });
+  if(state.winner!==null)return;
   const totalMs=state.playerTimeMs||300000;
   document.querySelectorAll("[data-clock]").forEach(el=>{
     const slot=Number(el.dataset.clock);
@@ -514,7 +593,10 @@ function drawBoard(){
     knownWallKeys.add(key);
     const disp=wallRotate(w.r,w.c,w.o,k,n);
     const wall=document.createElement("div");
-    wall.className=`wall ${disp.o} p${w.player}`+(isNew?" wall-in":"");
+    wall.className=`wall ${disp.o}`+(isNew?" wall-in":"");
+    // Color the wall with the exact color of the player who placed it (their
+    // own pawn color), instead of a fixed p0..p3 palette keyed to seat order.
+    wall.style.background=w.color||"#8a93a0";
     const st=wallRectStyle(disp.r,disp.c,disp.o,cw,ch);
     wall.style.left=st.left+"px";wall.style.top=st.top+"px";wall.style.width=st.width+"px";wall.style.height=st.height+"px";
     b.appendChild(wall);
